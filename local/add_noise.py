@@ -2,6 +2,7 @@ import argparse
 import numpy as np
 import librosa
 import os
+import pickle
 import soundfile as sf
 import random
 import threading
@@ -71,25 +72,14 @@ if __name__ == '__main__':
     min_snr_in_db = args.min_snr_in_db
     max_snr_in_db = args.max_snr_in_db
 
-    # Read background file
-    bg, bg_sr = librosa.load(noise_path, sr=None)
-
-    # Resample noise
-    bg = librosa.resample(bg, bg_sr, 16000)
-    bg_length = bg.shape[0]
-
-    # Sample-to-noise ratio sampler
-    snr_in_db = random.uniform(
-        min_snr_in_db, max_snr_in_db
-    )
-
-    # Check backgound noise strength
-    bg_rms = calculate_rms(bg)
-    if bg_rms < 1e-9:
-        warnings.warn(
-            "The file {} is too silent to be added as noise. Returning the input"
-            " unchanged.".format(self.parameters["noise_file_path"])
-        )
+    noises = [os.path.join(noise_path,f) for f in os.listdir(noise_path) if os.path.isfile(os.path.join(noise_path, f))]
+    noise_dict = {}
+    for noise in noises:
+        with open(noise, "rb") as input_file:
+            bg = pickle.load(input_file)
+            bg_length = bg.shape[0]
+            bg_rms = calculate_rms(bg)
+            noise_dict[(bg_length, bg_rms)] = bg
 
     # Create directory
     os.makedirs(output_folder_path, exist_ok=True)
@@ -112,6 +102,13 @@ if __name__ == '__main__':
             for f in os.listdir(apath):
                 audio_path = os.path.join(apath, f)
                 output_path = os.path.join(opath, f)
+
+                (bg_length, bg_rms), bg = random.choice(list(noise_dict.items()))
+
+                # Sample-to-noise ratio sampler
+                snr_in_db = random.uniform(
+                    min_snr_in_db, max_snr_in_db
+                )
 
                 # Read audio file
                 audio, sr = librosa.load(audio_path, sr=16000)
@@ -138,9 +135,6 @@ if __name__ == '__main__':
                 # Adjust the noise to match the desired noise RMS
                 bg_trim = bg_trim * (desired_noise_rms / bg_rms)
                 audio_with_bg = audio + bg_trim
-                # start_ = np.random.randint(bg.shape[0] - audio_length)
-                # bg_slice = bg[start_ : start_ + audio_length]
-                # audio_with_bg = audio + bg_slice * alpha
 
                 # Export noised audio file
                 sf.write(output_path, audio_with_bg, 16000, 'PCM_16')
